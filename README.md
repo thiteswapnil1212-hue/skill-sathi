@@ -2,6 +2,8 @@
 
 **Smarter access to government benefits.**
 
+Live demo (team deployment): https://scheme-sathi-rose.vercel.app
+
 Skill Sathi (original project name: Scheme Sathi) is a citizen decision-support system. It helps a person understand which government schemes they may qualify for, which schemes can work together, which combination is most useful, what documents are missing, and what to do next.
 
 It was built as a team hackathon project for PS16 — Autonomous Scheme-Bundle Optimizer for Citizens (AI/ML + Agentic AI + GovTech).
