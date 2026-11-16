@@ -106,6 +106,18 @@ npm run lint
 npm run build
 ```
 
+## Architecture
+
+```mermaid
+flowchart LR
+    Citizen([Citizen]) --> App["Next.js App<br/>profile form · results · scheme pages"]
+    App --> API["POST /api/analyze<br/>GET /api/schemes"]
+    API --> Engines["Deterministic engines<br/>eligibility · conflict · bundle<br/>optimizer · document · plan"]
+    Engines --> KB["Scheme knowledge base<br/>50 schemes · data/schemes.seed.json"]
+    Engines --> Explain["Gemini explanation layer<br/>personalized · grounded in result"]
+    Explain --> Out["Results<br/>eligible bundles · missing docs · application plan"]
+```
+
 ## Project structure
 
 ```text
