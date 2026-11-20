@@ -10,6 +10,12 @@ It was built as a team hackathon project for PS16 — Autonomous Scheme-Bundle O
 
 > **Important:** Skill Sathi is not a government authority and does not submit applications on behalf of citizens. Results say **“Potentially Eligible”**, not “Officially Eligible”. Eligibility is based on configured scheme rules and must be confirmed with the official authority before applying.
 
+## Screenshots
+
+![Skill Sathi home page](docs/screenshots/home.png)
+
+Home page — 'Find a potentially relevant combination of government benefits.' with the Check My Benefits call to action. Screenshot of the live demo, 20 Nov 2026.
+
 ## The five questions it answers
 
 1. Which schemes may I qualify for?
@@ -142,6 +148,69 @@ flowchart LR
 - **AI last, and optional:** `geminiService` (`src/backend/services/geminiService.ts`) only explains the deterministic result. It needs `GEMINI_API_KEY`; without a key there is no Gemini-generated explanation, but the analysis itself still runs.
 - **No persistence:** there is no database in this project. The catalog is a JSON file, and results are computed per request — nothing about the citizen is stored server-side by the app itself.
 
+### The analysis pipeline, traced from the code
+
+The diagram above shows the documented pipeline. This one is the exact order in code — `analyze()` in `src/backend/services/analysisService.ts` hands the work to `runAgent()` in `src/backend/services/agentService.ts`, which runs the seven engine tools in this order through the tool registry in `src/backend/agent/agentTools.ts` (each tool wraps one engine file in `src/backend/engines/`). Gemini runs last, and only explains the result.
+
+```mermaid
+flowchart TD
+    Form["Citizen profile + available documents<br/>/find-benefits"] --> API["POST /api/analyze<br/>src/app/api/analyze/route.ts<br/>validates shape, else 400 invalid_request"]
+    API --> Svc["analysisService.analyze()<br/>src/backend/services/analysisService.ts<br/>loads + sorts the 50 schemes,<br/>rejects if catalog validation fails"]
+    KB["Scheme knowledge base<br/>data/schemes.seed.json · 50 schemes<br/>loaded + validated by schemeRepository"] --> Svc
+    Svc --> Agent["runAgent()<br/>src/backend/services/agentService.ts<br/>controlled deterministic orchestrator"]
+    Agent --> E1["1 · evaluateEligibility<br/>eligibilityEngine.ts<br/>potentially_eligible / not_eligible / insufficient_data"]
+    E1 --> E2["2 · getMissingInformation<br/>missingInformationEngine.ts<br/>only for insufficient_data results"]
+    E2 --> C1{"Any potentially_eligible<br/>scheme?"}
+    C1 -->|"No — empty result"| Empty["AnalysisResult<br/>recommendedBundle: null<br/>missingDocuments: [] · applicationPlan: []"]
+    C1 -->|Yes| E3["3 · detectConflicts<br/>conflictEngine.ts"]
+    E3 --> E4["4 · generateBundles<br/>bundleEngine.ts"]
+    E4 --> E5["5 · optimizeBundle<br/>bundleOptimizer.ts<br/>ranks the combinations"]
+    E5 --> C2{"Recommended bundle<br/>found?"}
+    C2 -->|"No — empty result"| Empty
+    C2 -->|Yes| E6["6 · checkDocuments<br/>documentEngine.ts<br/>required vs available documents"]
+    E6 --> E7["7 · generateChecklist<br/>applicationPlanEngine.ts<br/>ordered next steps"]
+    E7 --> Gem["generateAnalysisExplanation()<br/>geminiService.ts · Gemini<br/>explains the deterministic result only<br/>any failure → aiExplanation: null"]
+    Empty --> Gem
+    Gem --> Out["AnalysisResult + aiExplanation<br/>200 → results pages<br/>/results · /results/bundle<br/>/results/documents · /results/application-plan"]
+```
+
+Two early exits: if no scheme is potentially eligible, or no bundle can be recommended, the run stops with an empty result (bundle `null`, empty documents and plan) — the Gemini explanation still runs on that empty result, and the API still returns 200.
+
+## Deployment — where everything runs
+
+```mermaid
+flowchart TB
+    subgraph Browser["Citizen's browser"]
+        Pages["Next.js pages<br/>/ · /find-benefits · /results<br/>/scheme/[schemeId]"]
+        Ctx["SchemeSathiContext<br/>profile + analysis result kept in sessionStorage<br/>key: scheme-sathi-state — cleared when the tab closes"]
+        Pages --> Ctx
+    end
+    subgraph Vercel["Vercel — team deployment<br/>scheme-sathi-rose.vercel.app"]
+        App["Next.js 16 App Router<br/>server-rendered pages + API routes"]
+        API1["POST /api/analyze<br/>src/app/api/analyze/route.ts"]
+        API2["GET /api/schemes<br/>src/app/api/schemes/route.ts"]
+        Svc["analysisService + runAgent<br/>orchestrates the 7 engines"]
+        Repo["schemeRepository<br/>loads + validates the catalog"]
+        KB["data/schemes.seed.json<br/>50 schemes · v2.0-research-curated<br/>imported by schemeRepository at build time"]
+        Gem["geminiService<br/>@google/genai 2.22.0"]
+    end
+    subgraph Google["Google Gemini API"]
+        Model["Gemini model<br/>GEMINI_MODEL, default gemini-2.5-flash"]
+    end
+    Pages -->|"fetch /api/analyze<br/>{ citizenProfile, availableDocuments }<br/>src/frontend/services/analyzeApi.ts"| API1
+    Pages -->|"fetch /api/schemes<br/>src/frontend/services/schemesApi.ts"| API2
+    API1 --> Svc
+    API2 --> Repo
+    Svc --> Repo
+    Repo --> KB
+    Svc -->|"explanation only<br/>needs GEMINI_API_KEY"| Gem
+    Gem --> Model
+```
+
+- **One host, no database:** the whole app — pages, API routes, engines, and the JSON dataset — runs on Vercel. There is no database server and no other backend service.
+- **Browser state is session-only:** the profile and the last analysis result live in `sessionStorage` (`SchemeSathiContext`, `src/frontend/context/SchemeSathiContext.tsx`), not `localStorage` — closing the tab clears them. Nothing about the citizen is stored server-side.
+- **Gemini is an outbound call, not a host:** `geminiService` calls the Google Gemini API from the Vercel server. Without `GEMINI_API_KEY` there is no explanation, but the deterministic analysis still runs and returns 200.
+
 ## Tech stack
 
 Verified from `package.json` (head `25caf2e45`):
@@ -228,7 +297,7 @@ See [docs/PRD.md](docs/PRD.md), [docs/API_CONTRACT.md](docs/API_CONTRACT.md), an
 
 ## Screenshots
 
-None yet — `screenshots/` contains only a `.gitkeep`. Add real captures of the home page, the profile form, and a results page before linking any here.
+See [Screenshots](#screenshots) near the top of this README — the home page capture lives at `docs/screenshots/home.png`. More captures (profile form, results page) can be added to the same folder.
 
 ## Honest limits
 
